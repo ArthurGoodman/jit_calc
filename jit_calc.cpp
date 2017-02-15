@@ -3,6 +3,107 @@
 #include <vector>
 #include <string>
 #include <exception>
+#include <stack>
+#include <memory>
+
+typedef unsigned char byte;
+
+class VM {
+public:
+    enum ByteCode {
+        Push,
+        Add,
+        Sub,
+        Mul,
+        Div,
+        Pow,
+        Ret
+    };
+
+    double run(const std::vector<byte> &code) {
+        std::stack<double> stack;
+        size_t ip = 0;
+
+        double left, right;
+
+        while (true)
+            switch (code[ip]) {
+            case Push:
+                stack.push(*reinterpret_cast<const double *>(code.data() + ++ip));
+                ip += sizeof(double);
+                break;
+
+            case Add:
+                right = stack.top();
+                stack.pop();
+                left = stack.top();
+                stack.pop();
+                stack.push(left + right);
+                ip++;
+                break;
+
+            case Sub:
+                right = stack.top();
+                stack.pop();
+                left = stack.top();
+                stack.pop();
+                stack.push(left - right);
+                ip++;
+                break;
+
+            case Mul:
+                right = stack.top();
+                stack.pop();
+                left = stack.top();
+                stack.pop();
+                stack.push(left * right);
+                ip++;
+                break;
+
+            case Div:
+                right = stack.top();
+                stack.pop();
+                left = stack.top();
+                stack.pop();
+                stack.push(left / right);
+                ip++;
+                break;
+
+            case Pow:
+                right = stack.top();
+                stack.pop();
+                left = stack.top();
+                stack.pop();
+                stack.push(pow(left, right));
+                ip++;
+                break;
+
+            case Ret:
+                return stack.top();
+
+            default:
+                return NAN;
+            }
+    }
+};
+
+class Node;
+
+class Compiler {
+    std::vector<byte> code;
+
+public:
+    std::vector<byte> compile(std::unique_ptr<Node> tree);
+
+    void gen(VM::ByteCode value) {
+        code.push_back(value);
+    }
+
+    void gen(double value) {
+        code.insert(code.end(), sizeof(value), 0);
+        *reinterpret_cast<double *>(code.data() + code.size() - sizeof(value)) = value;
+    }
+};
 
 class Node {
 public:
@@ -10,7 +111,17 @@ public:
     }
 
     virtual double eval() = 0;
+    virtual void compile(Compiler *c) = 0;
 };
+
+std::vector<byte> Compiler::compile(std::unique_ptr<Node> tree) {
+    code.clear();
+
+    tree->compile(this);
+    gen(VM::Ret);
+
+    return code;
+}
 
 class ValueNode : public Node {
     double value;
@@ -23,39 +134,115 @@ public:
     double eval() {
         return value;
     }
+
+    void compile(Compiler *c) {
+        c->gen(VM::Push);
+        c->gen(value);
+    }
 };
 
 class BinaryNode : public Node {
-    char op;
+protected:
     Node *left, *right;
 
-public:
-    BinaryNode(Node *left, char op, Node *right)
-        : op(op)
-        , left(left)
+    BinaryNode(Node *left, Node *right)
+        : left(left)
         , right(right) {
     }
 
+    ~BinaryNode() {
+        delete left;
+        delete right;
+    }
+};
+
+class PlusNode : public BinaryNode {
+public:
+    PlusNode(Node *left, Node *right)
+        : BinaryNode(left, right) {
+    }
+
     double eval() {
-        switch (op) {
-        case '+':
-            return left->eval() + right->eval();
+        return left->eval() + right->eval();
+    }
 
-        case '-':
-            return left->eval() - right->eval();
+    void compile(Compiler *c) {
+        left->compile(c);
+        right->compile(c);
 
-        case '*':
-            return left->eval() * right->eval();
+        c->gen(VM::Add);
+    }
+};
 
-        case '/':
-            return left->eval() / right->eval();
+class MinusNode : public BinaryNode {
+public:
+    MinusNode(Node *left, Node *right)
+        : BinaryNode(left, right) {
+    }
 
-        case '^':
-            return pow(left->eval(), right->eval());
+    double eval() {
+        return left->eval() - right->eval();
+    }
 
-        default:
-            return NAN;
-        }
+    void compile(Compiler *c) {
+        left->compile(c);
+        right->compile(c);
+
+        c->gen(VM::Sub);
+    }
+};
+
+class MultiplyNode : public BinaryNode {
+public:
+    MultiplyNode(Node *left, Node *right)
+        : BinaryNode(left, right) {
+    }
+
+    double eval() {
+        return left->eval() * right->eval();
+    }
+
+    void compile(Compiler *c) {
+        left->compile(c);
+        right->compile(c);
+
+        c->gen(VM::Mul);
+    }
+};
+
+class DivideNode : public BinaryNode {
+public:
+    DivideNode(Node *left, Node *right)
+        : BinaryNode(left, right) {
+    }
+
+    double eval() {
+        return left->eval() / right->eval();
+    }
+
+    void compile(Compiler *c) {
+        left->compile(c);
+        right->compile(c);
+
+        c->gen(VM::Div);
+    }
+};
+
+class PowerNode : public BinaryNode {
+public:
+    PowerNode(Node *left, Node *right)
+        : BinaryNode(left, right) {
+    }
+
+    double eval() {
+        return pow(left->eval(), right->eval());
+    }
+
+    void compile(Compiler *c) {
+        left->compile(c);
+        right->compile(c);
+
+        c->gen(VM::Pow);
     }
 };
 
@@ -109,7 +296,7 @@ class Parser {
     std::vector<Token>::const_iterator token;
 
 public:
-    Node *parse(const std::vector<Token> &tokens) {
+    std::unique_ptr<Node> parse(const std::vector<Token> &tokens) {
         this->tokens = tokens;
         token = this->tokens.begin();
 
@@ -118,7 +305,7 @@ public:
         if (!check('e'))
             throw std::runtime_error("there's an excess part of expression");
 
-        return n;
+        return std::unique_ptr<Node>(n);
     }
 
 private:
@@ -144,9 +331,9 @@ private:
 
         while (true) {
             if (accept('+'))
-                n = new BinaryNode(n, '+', mulDiv());
+                n = new PlusNode(n, mulDiv());
             else if (accept('-'))
-                n = new BinaryNode(n, '-', mulDiv());
+                n = new MinusNode(n, mulDiv());
             else
                 break;
         }
@@ -159,9 +346,9 @@ private:
 
         while (true) {
             if (accept('*'))
-                n = new BinaryNode(n, '*', power());
+                n = new MultiplyNode(n, power());
             else if (accept('/'))
-                n = new BinaryNode(n, '/', power());
+                n = new DivideNode(n, power());
             else
                 break;
         }
@@ -174,7 +361,7 @@ private:
 
         while (true) {
             if (accept('^'))
-                n = new BinaryNode(n, '^', unary());
+                n = new PowerNode(n, unary());
             else
                 break;
         }
@@ -186,9 +373,9 @@ private:
         Node *n = nullptr;
 
         if (accept('+'))
-            n = new BinaryNode(new ValueNode(0), '+', term());
+            n = new PlusNode(new ValueNode(0), term());
         else if (accept('-'))
-            n = new BinaryNode(new ValueNode(0), '-', term());
+            n = new MinusNode(new ValueNode(0), term());
         else
             n = term();
 
@@ -218,26 +405,27 @@ private:
 };
 
 int main() {
-    Lexer lexer;
-    Parser parser;
-
     while (true) {
         std::cout << "$ ";
 
-        std::string line;
-        std::getline(std::cin, line);
+        std::string str;
+        std::getline(std::cin, str);
 
-        if (line.empty())
+        if (str.empty())
             continue;
-        else if (line == "exit")
+        else if (str == "exit")
             break;
-        else if (line == "cls") {
+        else if (str == "cls") {
             system("cls");
             continue;
         } else {
             try {
-                Node *n = parser.parse(lexer.lex(line));
-                std::cout << n->eval() << "\n";
+                Lexer lexer;
+                Parser parser;
+                Compiler compiler;
+                VM vm;
+
+                std::cout << vm.run(compiler.compile(parser.parse(lexer.lex(str)))) << "\n";
             } catch (const std::exception &e) {
                 std::cout << "error: " << e.what() << "\n";
             }
