@@ -518,8 +518,7 @@ int main() {
             const char *expr = "2 * (3 + 1 / 2) - 6 + 2 * (3 + 1 / 2) - 6 + 2 * (3 + 1 / 2) - 6 + 2 * (3 + 1 / 2) - 6 + 2 * (3 + 1 / 2) - 6";
 
             std::shared_ptr<Node> tree = parser.parse(lexer.lex(expr));
-            std::vector<byte> code = compiler.compile(tree);
-            x86::Function fObj = vm.compile(code);
+            x86::Function fObj = vm.compile(compiler.compile(tree));
             double (*f)() = reinterpret_cast<double (*)()>(fObj.getCode());
 
             const int N = 1000000;
@@ -534,14 +533,6 @@ int main() {
             end = std::chrono::high_resolution_clock::now();
 
             std::cout << "tree:     sum=" << sum << " time=" << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " msec\n";
-
-            begin = std::chrono::high_resolution_clock::now();
-            sum = 0;
-            for (int i = 0; i < N; i++)
-                sum += vm.run(code);
-            end = std::chrono::high_resolution_clock::now();
-
-            std::cout << "bytecode: sum=" << sum << " time=" << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " msec\n";
 
             begin = std::chrono::high_resolution_clock::now();
             sum = 0;
