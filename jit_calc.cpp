@@ -5,6 +5,10 @@
 #include <exception>
 #include <stack>
 #include <memory>
+#include <ctime>
+#include <chrono>
+
+#include "compiler.h"
 
 typedef unsigned char byte;
 
@@ -82,28 +86,99 @@ public:
                 return stack.top();
 
             default:
-                return NAN;
+                throw std::runtime_error("invalid byte code");
             }
+
+        return NAN;
+    }
+
+    x86::Function compile(const std::vector<byte> &code) {
+        x86::Compiler c;
+        size_t ip = 0;
+
+        c.push(x86::EBP);
+        c.mov(x86::ESP, x86::EBP);
+
+        while (ip < code.size())
+            switch (code[ip]) {
+            case Push:
+                ip++;
+
+                c.sub(static_cast<byte>(8), x86::ESP);
+                c.mov(*reinterpret_cast<const int *>(code.data() + ip), c.ref(x86::ESP));
+                c.mov(*reinterpret_cast<const int *>(code.data() + ip + 4), c.ref(static_cast<byte>(4), x86::ESP));
+
+                ip += sizeof(double);
+                break;
+
+            case Add:
+
+                c.fldl(c.ref(x86::ESP));
+                c.fldl(c.ref(8, x86::ESP));
+                c.faddp();
+                c.add(static_cast<byte>(8), x86::ESP);
+                c.fstpl(c.ref(x86::ESP));
+
+                ip++;
+                break;
+
+            case Sub:
+
+                c.fldl(c.ref(x86::ESP));
+                c.fldl(c.ref(8, x86::ESP));
+                c.fsubp();
+                c.add(static_cast<byte>(8), x86::ESP);
+                c.fstpl(c.ref(x86::ESP));
+
+                ip++;
+                break;
+
+            case Mul:
+
+                c.fldl(c.ref(x86::ESP));
+                c.fldl(c.ref(8, x86::ESP));
+                c.fmulp();
+                c.add(static_cast<byte>(8), x86::ESP);
+                c.fstpl(c.ref(x86::ESP));
+
+                ip++;
+                break;
+
+            case Div:
+
+                c.fldl(c.ref(x86::ESP));
+                c.fldl(c.ref(8, x86::ESP));
+                c.fdivp();
+                c.add(static_cast<byte>(8), x86::ESP);
+                c.fstpl(c.ref(x86::ESP));
+
+                ip++;
+                break;
+
+            case Pow:
+                ip++;
+                break;
+
+            case Ret:
+                c.fldl(c.ref(x86::ESP));
+                c.leave();
+                c.ret();
+
+                // c.writeOBJ().write("a.o");
+                // system("objdump -d a.o");
+                // std::cout << "\n";
+
+                return c.compileFunction();
+
+            default:
+                throw std::runtime_error("invalid byte code");
+            }
+
+        return x86::Function();
     }
 };
 
-class Node;
-
-class Compiler {
-    std::vector<byte> code;
-
-public:
-    std::vector<byte> compile(std::unique_ptr<Node> tree);
-
-    void gen(VM::ByteCode value) {
-        code.push_back(value);
-    }
-
-    void gen(double value) {
-        code.insert(code.end(), sizeof(value), 0);
-        *reinterpret_cast<double *>(code.data() + code.size() - sizeof(value)) = value;
-    }
-};
+class Compiler;
 
 class Node {
 public:
@@ -114,14 +189,28 @@ public:
     virtual void compile(Compiler *c) = 0;
 };
 
-std::vector<byte> Compiler::compile(std::unique_ptr<Node> tree) {
-    code.clear();
+class Compiler {
+    std::vector<byte> code;
 
-    tree->compile(this);
-    gen(VM::Ret);
+public:
+    std::vector<byte> compile(std::shared_ptr<Node> tree) {
+        code.clear();
 
-    return code;
-}
+        tree->compile(this);
+        gen(VM::Ret);
+
+        return code;
+    }
+
+    void gen(VM::ByteCode value) {
+        code.push_back(value);
+    }
+
+    void gen(double value) {
+        code.insert(code.end(), sizeof(value), 0);
+        *reinterpret_cast<double *>(code.data() + code.size() - sizeof(value)) = value;
+    }
+};
 
 class ValueNode : public Node {
     double value;
@@ -296,7 +385,7 @@ class Parser {
     std::vector<Token>::const_iterator token;
 
 public:
-    std::unique_ptr<Node> parse(const std::vector<Token> &tokens) {
+    std::shared_ptr<Node> parse(const std::vector<Token> &tokens) {
         this->tokens = tokens;
         token = this->tokens.begin();
 
@@ -305,7 +394,7 @@ public:
         if (!check('e'))
             throw std::runtime_error("there's an excess part of expression");
 
-        return std::unique_ptr<Node>(n);
+        return std::shared_ptr<Node>(n);
     }
 
 private:
@@ -405,6 +494,13 @@ private:
 };
 
 int main() {
+    Lexer lexer;
+    Parser parser;
+    Compiler compiler;
+    VM vm;
+
+    std::cout << std::setprecision(16);
+
     while (true) {
         std::cout << "$ ";
 
@@ -418,14 +514,46 @@ int main() {
         else if (str == "cls") {
             system("cls");
             continue;
+        } else if (str == "test") {
+            const char *expr = "2 * (3 + 1 / 2) - 6 + 2 * (3 + 1 / 2) - 6 + 2 * (3 + 1 / 2) - 6 + 2 * (3 + 1 / 2) - 6 + 2 * (3 + 1 / 2) - 6";
+
+            std::shared_ptr<Node> tree = parser.parse(lexer.lex(expr));
+            std::vector<byte> code = compiler.compile(tree);
+            x86::Function fObj = vm.compile(code);
+            double (*f)() = reinterpret_cast<double (*)()>(fObj.getCode());
+
+            const int N = 1000000;
+            double sum;
+
+            std::chrono::high_resolution_clock::time_point begin, end;
+
+            begin = std::chrono::high_resolution_clock::now();
+            sum = 0;
+            for (int i = 0; i < N; i++)
+                sum += tree->eval();
+            end = std::chrono::high_resolution_clock::now();
+
+            std::cout << "tree:     sum=" << sum << " time=" << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " msec\n";
+
+            begin = std::chrono::high_resolution_clock::now();
+            sum = 0;
+            for (int i = 0; i < N; i++)
+                sum += vm.run(code);
+            end = std::chrono::high_resolution_clock::now();
+
+            std::cout << "bytecode: sum=" << sum << " time=" << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " msec\n";
+
+            begin = std::chrono::high_resolution_clock::now();
+            sum = 0;
+            for (int i = 0; i < N; i++)
+                sum += f();
+            end = std::chrono::high_resolution_clock::now();
+
+            std::cout << "x86 code: sum=" << sum << " time=" << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " msec\n";
         } else {
             try {
-                Lexer lexer;
-                Parser parser;
-                Compiler compiler;
-                VM vm;
-
-                std::cout << vm.run(compiler.compile(parser.parse(lexer.lex(str)))) << "\n";
+                x86::Function f = vm.compile(compiler.compile(parser.parse(lexer.lex(str))));
+                std::cout << reinterpret_cast<double (*)()>(f.getCode())() << "\n";
             } catch (const std::exception &e) {
                 std::cout << "error: " << e.what() << "\n";
             }
