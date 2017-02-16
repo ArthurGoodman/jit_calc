@@ -112,7 +112,6 @@ public:
                 break;
 
             case Add:
-
                 c.fldl(c.ref(x86::ESP));
                 c.fldl(c.ref(8, x86::ESP));
                 c.faddp();
@@ -123,7 +122,6 @@ public:
                 break;
 
             case Sub:
-
                 c.fldl(c.ref(x86::ESP));
                 c.fldl(c.ref(8, x86::ESP));
                 c.fsubp();
@@ -134,7 +132,6 @@ public:
                 break;
 
             case Mul:
-
                 c.fldl(c.ref(x86::ESP));
                 c.fldl(c.ref(8, x86::ESP));
                 c.fmulp();
@@ -145,7 +142,6 @@ public:
                 break;
 
             case Div:
-
                 c.fldl(c.ref(x86::ESP));
                 c.fldl(c.ref(8, x86::ESP));
                 c.fdivp();
@@ -156,6 +152,15 @@ public:
                 break;
 
             case Pow:
+                c.fldl(c.ref(x86::ESP));
+                c.fldl(c.ref(static_cast<byte>(8), x86::ESP));
+                c.fstpl(c.ref(x86::ESP));
+                c.fstpl(c.ref(static_cast<byte>(8), x86::ESP));
+                c.mov(reinterpret_cast<int>(pow), x86::EAX);
+                c.call(x86::EAX);
+                c.add(static_cast<byte>(8), x86::ESP);
+                c.fstpl(c.ref(x86::ESP));
+
                 ip++;
                 break;
 
