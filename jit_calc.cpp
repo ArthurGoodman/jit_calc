@@ -107,72 +107,94 @@ public:
         int sp = 0;
         int stackSize = 0;
 
+        bool store = false;
+
         while (ip < code.size())
             switch (code[ip]) {
             case Push:
+                if (store) {
+                    c.fstpl(c.ref(-sp, x86::EBP));
+                    store = false;
+                }
+
                 ip++;
 
                 sp += 8;
 
-                c.mov(*reinterpret_cast<const int *>(code.data() + ip), c.ref(-sp, x86::EBP));
-                c.mov(*reinterpret_cast<const int *>(code.data() + ip + 4), c.ref(-sp + 4, x86::EBP));
+                // c.mov(*reinterpret_cast<const int *>(code.data() + ip), c.ref(-sp, x86::EBP));
+                // c.mov(*reinterpret_cast<const int *>(code.data() + ip + 4), c.ref(-sp + 4, x86::EBP));
+
+                c.fldl(c.ref(reinterpret_cast<int>(code.data() + ip)));
+                c.fstpl(c.ref(-sp, x86::EBP));
 
                 stackSize = std::max(stackSize, static_cast<int>(sp));
                 ip += sizeof(double);
                 break;
 
             case Add:
-                c.fldl(c.ref(-sp + 8, x86::EBP));
-                c.faddl(c.ref(-sp, x86::EBP));
-                c.fstpl(c.ref(-sp + 8, x86::EBP));
+                if (!store)
+                    c.fldl(c.ref(-sp, x86::EBP));
+
+                c.faddl(c.ref(-sp + 8, x86::EBP));
 
                 sp -= 8;
+                store = true;
                 ip++;
                 break;
 
             case Sub:
-                c.fldl(c.ref(-sp + 8, x86::EBP));
-                c.fsubl(c.ref(-sp, x86::EBP));
-                c.fstpl(c.ref(-sp + 8, x86::EBP));
+                if (!store)
+                    c.fldl(c.ref(-sp, x86::EBP));
+
+                c.fsubrl(c.ref(-sp + 8, x86::EBP));
 
                 sp -= 8;
+                store = true;
                 ip++;
                 break;
 
             case Mul:
-                c.fldl(c.ref(-sp + 8, x86::EBP));
-                c.fmull(c.ref(-sp, x86::EBP));
-                c.fstpl(c.ref(-sp + 8, x86::EBP));
+                if (!store)
+                    c.fldl(c.ref(-sp, x86::EBP));
+
+                c.fmull(c.ref(-sp + 8, x86::EBP));
 
                 sp -= 8;
+                store = true;
                 ip++;
                 break;
 
             case Div:
-                c.fldl(c.ref(-sp + 8, x86::EBP));
-                c.fdivl(c.ref(-sp, x86::EBP));
-                c.fstpl(c.ref(-sp + 8, x86::EBP));
+                if (!store)
+                    c.fldl(c.ref(-sp, x86::EBP));
+
+                c.fdivrl(c.ref(-sp + 8, x86::EBP));
 
                 sp -= 8;
+                store = true;
                 ip++;
                 break;
 
             case Pow:
-                c.fldl(c.ref(-sp, x86::EBP));
+                if (!store)
+                    c.fldl(c.ref(-sp, x86::EBP));
+
                 c.fldl(c.ref(-sp + 8, x86::EBP));
                 c.fstpl(c.ref(x86::ESP));
                 c.fstpl(c.ref(8, x86::ESP));
                 c.mov(reinterpret_cast<int>(pow), x86::EAX);
                 c.call(x86::EAX);
-                c.fstpl(c.ref(-sp + 8, x86::EBP));
 
                 stackSize = std::max(stackSize, static_cast<int>(sp + 16));
                 sp -= 8;
+                store = true;
                 ip++;
                 break;
 
             case Ret:
-                c.fldl(c.ref(-sp, x86::EBP));
+                if (store == 0)
+                    c.fldl(c.ref(-8, x86::EBP));
+
                 c.leave();
                 c.ret();
 
@@ -566,7 +588,8 @@ int main() {
             std::cout << "x86 code: sum=" << sum << " time=" << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " msec\n";
         } else {
             try {
-                x86::Function f = vm.compile(compiler.compile(parser.parse(lexer.lex(str))));
+                std::vector<byte> code = compiler.compile(parser.parse(lexer.lex(str)));
+                x86::Function f = vm.compile(code);
                 std::cout << reinterpret_cast<double (*)()>(f.getCode())() << "\n";
             } catch (const std::exception &e) {
                 std::cout << "error: " << e.what() << "\n";
