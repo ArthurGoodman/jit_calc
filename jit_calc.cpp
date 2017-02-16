@@ -108,16 +108,13 @@ public:
         int sp = 0;
         int stackSize = 0;
 
-        bool store = false;
         bool powUsed = false;
 
         while (ip < code.size())
             switch (code[ip]) {
             case Push:
-                if (store) {
+                if (ip > 0)
                     c.fstpl(c.ref(-sp, x86::EBP));
-                    store = false;
-                }
 
                 ip++;
 
@@ -127,61 +124,41 @@ public:
                 // c.mov(*reinterpret_cast<const int *>(code.data() + ip + 4), c.ref(-sp + 4, x86::EBP));
 
                 c.fldl(c.ref(reinterpret_cast<int>(code.data() + ip)));
-                c.fstpl(c.ref(-sp, x86::EBP));
 
                 stackSize = std::max(stackSize, static_cast<int>(sp));
                 ip += sizeof(double);
                 break;
 
             case Add:
-                if (!store)
-                    c.fldl(c.ref(-sp, x86::EBP));
-
                 c.faddl(c.ref(-sp + 8, x86::EBP));
 
                 sp -= 8;
-                store = true;
                 ip++;
                 break;
 
             case Sub:
-                if (!store)
-                    c.fldl(c.ref(-sp, x86::EBP));
-
                 c.fsubrl(c.ref(-sp + 8, x86::EBP));
 
                 sp -= 8;
-                store = true;
                 ip++;
                 break;
 
             case Mul:
-                if (!store)
-                    c.fldl(c.ref(-sp, x86::EBP));
-
                 c.fmull(c.ref(-sp + 8, x86::EBP));
 
                 sp -= 8;
-                store = true;
                 ip++;
                 break;
 
             case Div:
-                if (!store)
-                    c.fldl(c.ref(-sp, x86::EBP));
-
                 c.fdivrl(c.ref(-sp + 8, x86::EBP));
 
                 sp -= 8;
-                store = true;
                 ip++;
                 break;
 
             case Pow:
                 powUsed = true;
-
-                if (!store)
-                    c.fldl(c.ref(-sp, x86::EBP));
 
                 c.fldl(c.ref(-sp + 8, x86::EBP));
                 c.fstpl(c.ref(x86::ESP));
@@ -190,18 +167,14 @@ public:
 
                 stackSize = std::max(stackSize, static_cast<int>(sp + 16));
                 sp -= 8;
-                store = true;
                 ip++;
                 break;
 
             case Ret:
-                if (store == 0)
-                    c.fldl(c.ref(-8, x86::EBP));
-
                 c.leave();
                 c.ret();
 
-                c.relocate("s", stackSize);
+                c.relocate("s", stackSize - 8);
 
                 if (powUsed)
                     c.relocate("pow", reinterpret_cast<int>(pow));
