@@ -104,7 +104,7 @@ public:
         c.mov(x86::ESP, x86::EBP);
         c.sub(c.abs("s"), x86::ESP);
 
-        byte sp = 0;
+        int sp = 0;
         int stackSize = 0;
 
         while (ip < code.size())
@@ -112,70 +112,67 @@ public:
             case Push:
                 ip++;
 
-                c.mov(*reinterpret_cast<const int *>(code.data() + ip), c.ref(sp, x86::ESP));
-                c.mov(*reinterpret_cast<const int *>(code.data() + ip + 4), c.ref(static_cast<byte>(sp + 4), x86::ESP));
-
                 sp += 8;
+
+                c.mov(*reinterpret_cast<const int *>(code.data() + ip), c.ref(-sp, x86::EBP));
+                c.mov(*reinterpret_cast<const int *>(code.data() + ip + 4), c.ref(-sp + 4, x86::EBP));
 
                 stackSize = std::max(stackSize, static_cast<int>(sp));
                 ip += sizeof(double);
                 break;
 
             case Add:
+                c.fldl(c.ref(-sp + 8, x86::EBP));
+                c.faddl(c.ref(-sp, x86::EBP));
+                c.fstpl(c.ref(-sp + 8, x86::EBP));
+
                 sp -= 8;
-
-                c.fldl(c.ref(static_cast<byte>(sp - 8), x86::ESP));
-                c.faddl(c.ref(sp, x86::ESP));
-                c.fstpl(c.ref(static_cast<byte>(sp - 8), x86::ESP));
-
                 ip++;
                 break;
 
             case Sub:
+                c.fldl(c.ref(-sp + 8, x86::EBP));
+                c.fsubl(c.ref(-sp, x86::EBP));
+                c.fstpl(c.ref(-sp + 8, x86::EBP));
+
                 sp -= 8;
-
-                c.fldl(c.ref(static_cast<byte>(sp - 8), x86::ESP));
-                c.fsubl(c.ref(sp, x86::ESP));
-                c.fstpl(c.ref(static_cast<byte>(sp - 8), x86::ESP));
-
                 ip++;
                 break;
 
             case Mul:
+                c.fldl(c.ref(-sp + 8, x86::EBP));
+                c.fmull(c.ref(-sp, x86::EBP));
+                c.fstpl(c.ref(-sp + 8, x86::EBP));
+
                 sp -= 8;
-
-                c.fldl(c.ref(static_cast<byte>(sp - 8), x86::ESP));
-                c.fmull(c.ref(sp, x86::ESP));
-                c.fstpl(c.ref(static_cast<byte>(sp - 8), x86::ESP));
-
                 ip++;
                 break;
 
             case Div:
+                c.fldl(c.ref(-sp + 8, x86::EBP));
+                c.fdivl(c.ref(-sp, x86::EBP));
+                c.fstpl(c.ref(-sp + 8, x86::EBP));
+
                 sp -= 8;
-
-                c.fldl(c.ref(static_cast<byte>(sp - 8), x86::ESP));
-                c.fdivl(c.ref(sp, x86::ESP));
-                c.fstpl(c.ref(static_cast<byte>(sp - 8), x86::ESP));
-
                 ip++;
                 break;
 
             case Pow:
-                // c.fldl(c.ref(x86::ESP));
-                // c.fldl(c.ref(static_cast<byte>(8), x86::ESP));
-                // c.fstpl(c.ref(x86::ESP));
-                // c.fstpl(c.ref(static_cast<byte>(8), x86::ESP));
-                // c.mov(reinterpret_cast<int>(pow), x86::EAX);
-                // c.call(x86::EAX);
-                // c.add(static_cast<byte>(8), x86::ESP);
-                // c.fstpl(c.ref(x86::ESP));
+                c.fldl(c.ref(-sp, x86::EBP));
+                c.fldl(c.ref(-sp + 8, x86::EBP));
+                c.fstpl(c.ref(x86::ESP));
+                c.fstpl(c.ref(8, x86::ESP));
+                c.mov(reinterpret_cast<int>(pow), x86::EAX);
+                c.call(x86::EAX);
+                c.fstpl(c.ref(-sp + 8, x86::EBP));
 
+                stackSize = std::max(stackSize, static_cast<int>(sp + 16));
+                sp -= 8;
                 ip++;
                 break;
 
             case Ret:
-                c.fldl(c.ref(x86::ESP));
+                c.fldl(c.ref(-sp, x86::EBP));
                 c.leave();
                 c.ret();
 
