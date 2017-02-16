@@ -3,7 +3,6 @@
 #include <vector>
 #include <string>
 #include <exception>
-#include <stack>
 #include <memory>
 #include <ctime>
 #include <chrono>
@@ -13,6 +12,8 @@
 typedef unsigned char byte;
 
 class VM {
+    std::vector<double> stack;
+
 public:
     enum ByteCode {
         Push,
@@ -25,7 +26,8 @@ public:
     };
 
     double run(const std::vector<byte> &code) {
-        std::stack<double> stack;
+        stack.clear();
+
         size_t ip = 0;
 
         double left, right;
@@ -33,57 +35,57 @@ public:
         while (true)
             switch (code[ip]) {
             case Push:
-                stack.push(*reinterpret_cast<const double *>(code.data() + ++ip));
+                stack.push_back(*reinterpret_cast<const double *>(code.data() + ++ip));
                 ip += sizeof(double);
                 break;
 
             case Add:
-                right = stack.top();
-                stack.pop();
-                left = stack.top();
-                stack.pop();
-                stack.push(left + right);
+                right = stack.back();
+                stack.pop_back();
+                left = stack.back();
+                stack.pop_back();
+                stack.push_back(left + right);
                 ip++;
                 break;
 
             case Sub:
-                right = stack.top();
-                stack.pop();
-                left = stack.top();
-                stack.pop();
-                stack.push(left - right);
+                right = stack.back();
+                stack.pop_back();
+                left = stack.back();
+                stack.pop_back();
+                stack.push_back(left - right);
                 ip++;
                 break;
 
             case Mul:
-                right = stack.top();
-                stack.pop();
-                left = stack.top();
-                stack.pop();
-                stack.push(left * right);
+                right = stack.back();
+                stack.pop_back();
+                left = stack.back();
+                stack.pop_back();
+                stack.push_back(left * right);
                 ip++;
                 break;
 
             case Div:
-                right = stack.top();
-                stack.pop();
-                left = stack.top();
-                stack.pop();
-                stack.push(left / right);
+                right = stack.back();
+                stack.pop_back();
+                left = stack.back();
+                stack.pop_back();
+                stack.push_back(left / right);
                 ip++;
                 break;
 
             case Pow:
-                right = stack.top();
-                stack.pop();
-                left = stack.top();
-                stack.pop();
-                stack.push(pow(left, right));
+                right = stack.back();
+                stack.pop_back();
+                left = stack.back();
+                stack.pop_back();
+                stack.push_back(pow(left, right));
                 ip++;
                 break;
 
             case Ret:
-                return stack.top();
+                return stack.back();
 
             default:
                 throw std::runtime_error("invalid byte code");
@@ -96,70 +98,78 @@ public:
         x86::Compiler c;
         size_t ip = 0;
 
+        c.symbol("s");
+
         c.push(x86::EBP);
         c.mov(x86::ESP, x86::EBP);
+        c.sub(c.abs("s"), x86::ESP);
+
+        byte sp = 0;
+        int stackSize = 0;
 
         while (ip < code.size())
             switch (code[ip]) {
             case Push:
                 ip++;
 
-                c.sub(static_cast<byte>(8), x86::ESP);
-                c.mov(*reinterpret_cast<const int *>(code.data() + ip), c.ref(x86::ESP));
-                c.mov(*reinterpret_cast<const int *>(code.data() + ip + 4), c.ref(static_cast<byte>(4), x86::ESP));
+                c.mov(*reinterpret_cast<const int *>(code.data() + ip), c.ref(sp, x86::ESP));
+                c.mov(*reinterpret_cast<const int *>(code.data() + ip + 4), c.ref(static_cast<byte>(sp + 4), x86::ESP));
 
+                sp += 8;
+
+                stackSize = std::max(stackSize, static_cast<int>(sp));
                 ip += sizeof(double);
                 break;
 
             case Add:
-                c.fldl(c.ref(x86::ESP));
-                c.fldl(c.ref(8, x86::ESP));
-                c.faddp();
-                c.add(static_cast<byte>(8), x86::ESP);
-                c.fstpl(c.ref(x86::ESP));
+                sp -= 8;
+
+                c.fldl(c.ref(static_cast<byte>(sp - 8), x86::ESP));
+                c.faddl(c.ref(sp, x86::ESP));
+                c.fstpl(c.ref(static_cast<byte>(sp - 8), x86::ESP));
 
                 ip++;
                 break;
 
             case Sub:
-                c.fldl(c.ref(x86::ESP));
-                c.fldl(c.ref(8, x86::ESP));
-                c.fsubp();
-                c.add(static_cast<byte>(8), x86::ESP);
-                c.fstpl(c.ref(x86::ESP));
+                sp -= 8;
+
+                c.fldl(c.ref(static_cast<byte>(sp - 8), x86::ESP));
+                c.fsubl(c.ref(sp, x86::ESP));
+                c.fstpl(c.ref(static_cast<byte>(sp - 8), x86::ESP));
 
                 ip++;
                 break;
 
             case Mul:
-                c.fldl(c.ref(x86::ESP));
-                c.fldl(c.ref(8, x86::ESP));
-                c.fmulp();
-                c.add(static_cast<byte>(8), x86::ESP);
-                c.fstpl(c.ref(x86::ESP));
+                sp -= 8;
+
+                c.fldl(c.ref(static_cast<byte>(sp - 8), x86::ESP));
+                c.fmull(c.ref(sp, x86::ESP));
+                c.fstpl(c.ref(static_cast<byte>(sp - 8), x86::ESP));
 
                 ip++;
                 break;
 
             case Div:
-                c.fldl(c.ref(x86::ESP));
-                c.fldl(c.ref(8, x86::ESP));
-                c.fdivp();
-                c.add(static_cast<byte>(8), x86::ESP);
-                c.fstpl(c.ref(x86::ESP));
+                sp -= 8;
+
+                c.fldl(c.ref(static_cast<byte>(sp - 8), x86::ESP));
+                c.fdivl(c.ref(sp, x86::ESP));
+                c.fstpl(c.ref(static_cast<byte>(sp - 8), x86::ESP));
 
                 ip++;
                 break;
 
             case Pow:
-                c.fldl(c.ref(x86::ESP));
-                c.fldl(c.ref(static_cast<byte>(8), x86::ESP));
-                c.fstpl(c.ref(x86::ESP));
-                c.fstpl(c.ref(static_cast<byte>(8), x86::ESP));
-                c.mov(reinterpret_cast<int>(pow), x86::EAX);
-                c.call(x86::EAX);
-                c.add(static_cast<byte>(8), x86::ESP);
-                c.fstpl(c.ref(x86::ESP));
+                // c.fldl(c.ref(x86::ESP));
+                // c.fldl(c.ref(static_cast<byte>(8), x86::ESP));
+                // c.fstpl(c.ref(x86::ESP));
+                // c.fstpl(c.ref(static_cast<byte>(8), x86::ESP));
+                // c.mov(reinterpret_cast<int>(pow), x86::EAX);
+                // c.call(x86::EAX);
+                // c.add(static_cast<byte>(8), x86::ESP);
+                // c.fstpl(c.ref(x86::ESP));
 
                 ip++;
                 break;
@@ -169,9 +179,11 @@ public:
                 c.leave();
                 c.ret();
 
-                // c.writeOBJ().write("a.o");
-                // system("objdump -d a.o");
-                // std::cout << "\n";
+                c.relocate("s", stackSize);
+
+                c.writeOBJ().write("a.o");
+                system("objdump -d a.o");
+                std::cout << "\n";
 
                 return c.compileFunction();
 
@@ -523,7 +535,8 @@ int main() {
             const char *expr = "2 * (3 + 1 / 2) - 6 + 2 * (3 + 1 / 2) - 6 + 2 * (3 + 1 / 2) - 6 + 2 * (3 + 1 / 2) - 6 + 2 * (3 + 1 / 2) - 6";
 
             std::shared_ptr<Node> tree = parser.parse(lexer.lex(expr));
-            x86::Function fObj = vm.compile(compiler.compile(tree));
+            std::vector<byte> code = compiler.compile(tree);
+            x86::Function fObj = vm.compile(code);
             double (*f)() = reinterpret_cast<double (*)()>(fObj.getCode());
 
             const int N = 1000000;
@@ -538,6 +551,14 @@ int main() {
             end = std::chrono::high_resolution_clock::now();
 
             std::cout << "tree:     sum=" << sum << " time=" << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " msec\n";
+
+            begin = std::chrono::high_resolution_clock::now();
+            sum = 0;
+            for (int i = 0; i < N; i++)
+                sum += vm.run(code);
+            end = std::chrono::high_resolution_clock::now();
+
+            std::cout << "bytecode: sum=" << sum << " time=" << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " msec\n";
 
             begin = std::chrono::high_resolution_clock::now();
             sum = 0;
