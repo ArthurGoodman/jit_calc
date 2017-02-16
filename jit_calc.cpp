@@ -99,6 +99,7 @@ public:
         size_t ip = 0;
 
         c.symbol("s");
+        c.symbol("pow");
 
         c.push(x86::EBP);
         c.mov(x86::ESP, x86::EBP);
@@ -108,6 +109,7 @@ public:
         int stackSize = 0;
 
         bool store = false;
+        bool powUsed = false;
 
         while (ip < code.size())
             switch (code[ip]) {
@@ -176,14 +178,15 @@ public:
                 break;
 
             case Pow:
+                powUsed = true;
+
                 if (!store)
                     c.fldl(c.ref(-sp, x86::EBP));
 
                 c.fldl(c.ref(-sp + 8, x86::EBP));
                 c.fstpl(c.ref(x86::ESP));
                 c.fstpl(c.ref(8, x86::ESP));
-                c.mov(reinterpret_cast<int>(pow), x86::EAX);
-                c.call(x86::EAX);
+                c.call(c.rel("pow"));
 
                 stackSize = std::max(stackSize, static_cast<int>(sp + 16));
                 sp -= 8;
@@ -199,6 +202,9 @@ public:
                 c.ret();
 
                 c.relocate("s", stackSize);
+
+                if (powUsed)
+                    c.relocate("pow", reinterpret_cast<int>(pow));
 
                 c.writeOBJ().write("a.o");
                 system("objdump -d a.o");
