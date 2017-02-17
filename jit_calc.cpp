@@ -48,40 +48,35 @@ public:
         double *sp = stack + stackSize;
 
         while (true)
-            switch (*ip) {
+            switch (*(ip++)) {
             case Push:
-                *(--sp) = *reinterpret_cast<const double *>(++ip);
+                *(--sp) = *reinterpret_cast<const double *>(ip);
                 ip += sizeof(double);
                 break;
 
             case Add:
                 *(sp + 1) += *sp;
                 sp++;
-                ip++;
                 break;
 
             case Sub:
                 *(sp + 1) -= *sp;
                 sp++;
-                ip++;
                 break;
 
             case Mul:
                 *(sp + 1) *= *sp;
                 sp++;
-                ip++;
                 break;
 
             case Div:
                 *(sp + 1) /= *sp;
                 sp++;
-                ip++;
                 break;
 
             case Pow:
                 *(sp + 1) = pow(*(sp + 1), *sp);
                 sp++;
-                ip++;
                 break;
 
             case Ret:
