@@ -11,8 +11,15 @@
 
 typedef unsigned char byte;
 
+struct Function {
+    std::vector<byte> code;
+    int stackSize;
+};
+
 class VM {
-    std::vector<double> stack;
+    double *stack = nullptr;
+    size_t stackSize;
+    byte *code;
 
 public:
     enum ByteCode {
@@ -25,67 +32,60 @@ public:
         Ret
     };
 
-    double run(const std::vector<byte> &code) {
-        stack.clear();
+    void allocate(size_t size) {
+        delete stack;
 
-        size_t ip = 0;
+        stack = new double[size];
+        stackSize = size;
+    }
 
-        double left, right;
+    void setCode(byte *code) {
+        this->code = code;
+    }
+
+    double run() {
+        byte *ip = code;
+        double *sp = stack + stackSize;
 
         while (true)
-            switch (code[ip]) {
+            switch (*ip) {
             case Push:
-                stack.push_back(*reinterpret_cast<const double *>(code.data() + ++ip));
+                *(--sp) = *reinterpret_cast<const double *>(++ip);
                 ip += sizeof(double);
                 break;
 
             case Add:
-                right = stack.back();
-                stack.pop_back();
-                left = stack.back();
-                stack.pop_back();
-                stack.push_back(left + right);
+                *(sp + 1) += *sp;
+                sp++;
                 ip++;
                 break;
 
             case Sub:
-                right = stack.back();
-                stack.pop_back();
-                left = stack.back();
-                stack.pop_back();
-                stack.push_back(left - right);
+                *(sp + 1) -= *sp;
+                sp++;
                 ip++;
                 break;
 
             case Mul:
-                right = stack.back();
-                stack.pop_back();
-                left = stack.back();
-                stack.pop_back();
-                stack.push_back(left * right);
+                *(sp + 1) *= *sp;
+                sp++;
                 ip++;
                 break;
 
             case Div:
-                right = stack.back();
-                stack.pop_back();
-                left = stack.back();
-                stack.pop_back();
-                stack.push_back(left / right);
+                *(sp + 1) /= *sp;
+                sp++;
                 ip++;
                 break;
 
             case Pow:
-                right = stack.back();
-                stack.pop_back();
-                left = stack.back();
-                stack.pop_back();
-                stack.push_back(pow(left, right));
+                *(sp + 1) = pow(*(sp + 1), *sp);
+                sp++;
                 ip++;
                 break;
 
             case Ret:
-                return stack.back();
+                return *sp;
 
             default:
                 throw std::runtime_error("invalid byte code");
@@ -94,72 +94,51 @@ public:
         return NAN;
     }
 
-    x86::Function compile(const std::vector<byte> &code) {
-        x86::Compiler c;
-        size_t ip = 0;
+    x86::Function compile(const Function &f) {
+        const byte *ip = f.code.data();
+        int stackSize = f.stackSize;
 
-        c.symbol("s");
-        c.symbol("pow");
+        x86::Compiler c;
 
         c.push(x86::EBP);
         c.mov(x86::ESP, x86::EBP);
-        c.sub(c.abs("s"), x86::ESP);
+        c.sub(c.abs("stackSize"), x86::ESP);
 
         int sp = 0;
-        int stackSize = 0;
 
-        bool powUsed = false;
+        std::vector<double> data;
 
-        while (ip < code.size())
-            switch (code[ip]) {
+        while (true)
+            switch (*(ip++)) {
             case Push:
-                if (ip > 0)
+                if (ip > f.code.data() + 1)
                     c.fstpl(c.ref(-sp, x86::EBP));
-
-                ip++;
 
                 sp += 8;
 
-                // c.mov(*reinterpret_cast<const int *>(code.data() + ip), c.ref(-sp, x86::EBP));
-                // c.mov(*reinterpret_cast<const int *>(code.data() + ip + 4), c.ref(-sp + 4, x86::EBP));
+                c.fldl(c.ref(c.abs("data") + data.size() * sizeof(double)));
+                data.push_back(*reinterpret_cast<const double *>(ip));
 
-                c.fldl(c.ref(reinterpret_cast<int>(code.data() + ip)));
-
-                stackSize = std::max(stackSize, static_cast<int>(sp));
                 ip += sizeof(double);
                 break;
 
             case Add:
-                c.faddl(c.ref(-sp + 8, x86::EBP));
-
-                sp -= 8;
-                ip++;
+                c.faddl(c.ref(-(sp -= 8), x86::EBP));
                 break;
 
             case Sub:
-                c.fsubrl(c.ref(-sp + 8, x86::EBP));
-
-                sp -= 8;
-                ip++;
+                c.fsubrl(c.ref(-(sp -= 8), x86::EBP));
                 break;
 
             case Mul:
-                c.fmull(c.ref(-sp + 8, x86::EBP));
-
-                sp -= 8;
-                ip++;
+                c.fmull(c.ref(-(sp -= 8), x86::EBP));
                 break;
 
             case Div:
-                c.fdivrl(c.ref(-sp + 8, x86::EBP));
-
-                sp -= 8;
-                ip++;
+                c.fdivrl(c.ref(-(sp -= 8), x86::EBP));
                 break;
 
             case Pow:
-                powUsed = true;
-
                 c.fldl(c.ref(-sp + 8, x86::EBP));
                 c.fstpl(c.ref(x86::ESP));
                 c.fstpl(c.ref(8, x86::ESP));
@@ -167,23 +146,27 @@ public:
 
                 stackSize = std::max(stackSize, static_cast<int>(sp + 16));
                 sp -= 8;
-                ip++;
                 break;
 
-            case Ret:
+            case Ret: {
                 c.leave();
                 c.ret();
 
-                c.relocate("s", stackSize - 8);
+                for (const double &constant : data)
+                    c.constant(constant);
 
-                if (powUsed)
-                    c.relocate("pow", reinterpret_cast<int>(pow));
+                const ByteArray &code = c.getCode();
+
+                c.relocate("data", reinterpret_cast<int>(code.data() + code.size() - data.size() * sizeof(double)));
+                c.relocate("stackSize", stackSize - 8);
+                c.relocate("pow", reinterpret_cast<int>(pow));
 
                 c.writeOBJ().write("a.o");
                 system("objdump -d a.o");
                 std::cout << "\n";
 
                 return c.compileFunction();
+            }
 
             default:
                 throw std::runtime_error("invalid byte code");
@@ -206,15 +189,19 @@ public:
 
 class Compiler {
     std::vector<byte> code;
+    int sp, stackSize;
 
 public:
-    std::vector<byte> compile(std::shared_ptr<Node> tree) {
+    Function compile(std::shared_ptr<Node> tree) {
         code.clear();
+
+        sp = 0;
+        stackSize = 0;
 
         tree->compile(this);
         gen(VM::Ret);
 
-        return code;
+        return { code, stackSize };
     }
 
     void gen(VM::ByteCode value) {
@@ -224,6 +211,15 @@ public:
     void gen(double value) {
         code.insert(code.end(), sizeof(value), 0);
         *reinterpret_cast<double *>(code.data() + code.size() - sizeof(value)) = value;
+    }
+
+    void push() {
+        sp += 8;
+        stackSize = std::max(stackSize, sp);
+    }
+
+    void pop() {
+        sp -= 8;
     }
 };
 
@@ -242,6 +238,7 @@ public:
     void compile(Compiler *c) {
         c->gen(VM::Push);
         c->gen(value);
+        c->push();
     }
 };
 
@@ -275,6 +272,7 @@ public:
         right->compile(c);
 
         c->gen(VM::Add);
+        c->pop();
     }
 };
 
@@ -293,6 +291,7 @@ public:
         right->compile(c);
 
         c->gen(VM::Sub);
+        c->pop();
     }
 };
 
@@ -311,6 +310,7 @@ public:
         right->compile(c);
 
         c->gen(VM::Mul);
+        c->pop();
     }
 };
 
@@ -329,6 +329,7 @@ public:
         right->compile(c);
 
         c->gen(VM::Div);
+        c->pop();
     }
 };
 
@@ -347,6 +348,7 @@ public:
         right->compile(c);
 
         c->gen(VM::Pow);
+        c->pop();
     }
 };
 
@@ -533,9 +535,12 @@ int main() {
             const char *expr = "2 * (3 + 1 / 2) - 6 + 2 * (3 + 1 / 2) - 6 + 2 * (3 + 1 / 2) - 6 + 2 * (3 + 1 / 2) - 6 + 2 * (3 + 1 / 2) - 6";
 
             std::shared_ptr<Node> tree = parser.parse(lexer.lex(expr));
-            std::vector<byte> code = compiler.compile(tree);
-            x86::Function fObj = vm.compile(code);
+            Function func = compiler.compile(tree);
+            x86::Function fObj = vm.compile(func);
             double (*f)() = reinterpret_cast<double (*)()>(fObj.getCode());
+
+            vm.allocate(func.stackSize);
+            vm.setCode(func.code.data());
 
             const int N = 1000000;
             double sum;
@@ -553,7 +558,7 @@ int main() {
             begin = std::chrono::high_resolution_clock::now();
             sum = 0;
             for (int i = 0; i < N; i++)
-                sum += vm.run(code);
+                sum += vm.run();
             end = std::chrono::high_resolution_clock::now();
 
             std::cout << "bytecode: sum=" << sum << " time=" << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " msec\n";
@@ -567,8 +572,7 @@ int main() {
             std::cout << "x86 code: sum=" << sum << " time=" << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " msec\n";
         } else {
             try {
-                std::vector<byte> code = compiler.compile(parser.parse(lexer.lex(str)));
-                x86::Function f = vm.compile(code);
+                x86::Function f = vm.compile(compiler.compile(parser.parse(lexer.lex(str))));
                 std::cout << reinterpret_cast<double (*)()>(f.getCode())() << "\n";
             } catch (const std::exception &e) {
                 std::cout << "error: " << e.what() << "\n";
