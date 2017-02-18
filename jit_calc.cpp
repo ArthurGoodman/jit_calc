@@ -134,13 +134,12 @@ public:
                 break;
 
             case Pow:
-                c.fldl(c.ref(-sp + 8, x86::EBP));
+                c.fldl(c.ref(-(sp -= 8), x86::EBP));
                 c.fstpl(c.ref(x86::ESP));
                 c.fstpl(c.ref(8, x86::ESP));
                 c.call(c.rel("pow"));
 
                 stackSize = std::max(stackSize, static_cast<int>(sp + 16));
-                sp -= 8;
                 break;
 
             case Ret: {
